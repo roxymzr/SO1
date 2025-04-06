@@ -26,7 +26,7 @@ void logAction(char* hunt_id, char* action) {
 
     int f = open(file, O_WRONLY | O_CREAT | O_APPEND, 0644);
     if (f < 0) {
-        fprintf(stderr, "ERROR: %s\n", strerror(errno));
+        perror("Eroare logare");
         return;
     }
 
@@ -47,44 +47,42 @@ void addTreasure(char* hunt_id) {
 
     int f = open(file, O_WRONLY | O_CREAT | O_APPEND, 0644);
     if (f < 0) {
-        fprintf(stderr, "ERROR: %s\n", strerror(errno));
+        perror("Eroare deschidere fisier");
         return;
     }
 
-    Treasure t;
+    Treasure treasure;
 
     printf("Treasure ID: ");
-    fgets(t.id, SIZE, stdin);
-    t.id[strcspn(t.id, "\n")] = '\0';
+    fgets(treasure.id, SIZE, stdin);
+    treasure.id[strcspn(treasure.id, "\n")] = '\0';
 
     printf("Username: ");
-    fgets(t.username, SIZE, stdin);
-    t.username[strcspn(t.username, "\n")] = '\0';
+    fgets(treasure.username, SIZE, stdin);
+    treasure.username[strcspn(treasure.username, "\n")] = '\0';
 
     printf("Latitude: ");
-    scanf("%f", &t.latitude);
+    scanf("%f", &treasure.latitude);
     getchar();
 
     printf("Longitude: ");
-    scanf("%f", &t.longitude);
-    getchar(); 
+    scanf("%f", &treasure.longitude);
+    getchar();
 
     printf("Clue: ");
-    fgets(t.clue, SIZE, stdin);
-    t.clue[strcspn(t.clue, "\n")] = '\0';
+    fgets(treasure.clue, SIZE, stdin);
+    treasure.clue[strcspn(treasure.clue, "\n")] = '\0';
 
     printf("Value: ");
-    scanf("%d", &t.value);
-    getchar(); 
+    scanf("%d", &treasure.value);
+    getchar();
 
-    write(f, &t, sizeof(Treasure));
+    write(f, &treasure, sizeof(Treasure));
     close(f);
 
-    //char action[STRING_SIZE];
-    //snprintf(action, sizeof(action), "Added treasure %s.", t.id);
-    logAction(hunt_id, "Treasure added");
+    logAction(hunt_id, "Treasure adaugat");
 
-    printf("Treasure added successfully.\n");
+    printf("Treasure adaugat cu succes.\n");
 }
 
 void viewTreasure(char* hunt_id, char* target_id) {
@@ -93,21 +91,19 @@ void viewTreasure(char* hunt_id, char* target_id) {
 
     int f = open(file, O_RDONLY);
     if (f < 0) {
-        fprintf(stderr, "ERROR: %s\n", strerror(errno));
+        perror("Eroare la citire");
         return;
     }
 
-    Treasure t;
+    Treasure treasure;
     int found = 0;
 
-    while (read(f, &t, sizeof(Treasure)) == sizeof(Treasure)) {
-        // Debugging: afișează ID-ul citit și cel căutat
-        printf("Searching for treasure ID: %s\n", target_id);
-        printf("Found treasure ID: %s\n", t.id);
+    while (read(f, &treasure, sizeof(Treasure)) == sizeof(Treasure)) {
 
-        if (strcmp(t.id, target_id) == 0) {
+        if (strcmp(treasure.id, target_id) == 0) {
+            printf("\n Treasure gasit:\n");
             printf("ID: %s, Username: %s, Latitude: %.2f, Longitude: %.2f, Value: %d\n",
-                t.id, t.username, t.latitude, t.longitude, t.value);
+                treasure.id, treasure.username, treasure.latitude, treasure.longitude, treasure.value);
             found = 1;
             break;
         }
@@ -116,7 +112,7 @@ void viewTreasure(char* hunt_id, char* target_id) {
     close(f);
 
     if (!found) {
-        printf("Treasure %s not found.\n", target_id);
+        printf("Treasure cu ID-ul: %s nu a fost gasit.\n", target_id);
     }
 
     char action[SIZE];
@@ -125,48 +121,46 @@ void viewTreasure(char* hunt_id, char* target_id) {
 }
 
 void removeTreasure(char* hunt_id, char* target_id) {
-    char file[SIZE];
-    snprintf(file, sizeof(file), "%s/%s", hunt_id, TREASURE_FILE);
+    char originalFile[SIZE];
+    snprintf(originalFile, sizeof(originalFile), "%s/%s", hunt_id, TREASURE_FILE);
 
-    int f = open(file, O_RDONLY);
-    if (f < 0) {
-        fprintf(stderr, "ERROR: %s\n", strerror(errno));
+    char tempFile[SIZE];
+    snprintf(tempFile, sizeof(tempFile), "%s/temp.dat", hunt_id);
+
+
+    int in_f = open(originalFile, O_RDONLY);
+    int out_f = open(tempFile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+
+    if (in_f < 0 || out_f < 0) {
+        perror("Eroare la accesarea fișierelor");
+        if (in_f >= 0) close(in_f);
+        if (out_f >= 0) close(out_f);
         return;
     }
 
-    char temp[SIZE];
-    snprintf(temp, sizeof(temp), "%s/temp.dat", hunt_id);
-
-    int temp_f = open(temp, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (temp_f < 0) {
-        fprintf(stderr, "ERROR: %s\n", strerror(errno));
-        close(f);
-        return;
-    }
-
-    Treasure t;
+    Treasure treasure;
     int removed = 0;
 
-    while (read(f, &t, sizeof(Treasure)) == sizeof(Treasure)) {
-        if (strcmp(t.id, target_id) != 0) {
-            write(temp_f, &t, sizeof(Treasure));
+    while (read(in_f, &treasure, sizeof(Treasure)) == sizeof(Treasure)) {
+        if (strcmp(treasure.id, target_id) != 0) {
+            write(out_f, &treasure, sizeof(Treasure));
         } else {
             removed = 1;
         }
     }
 
-    close(f);
-    close(temp_f);
+    close(in_f);
+    close(out_f);
 
     if (removed) {
-        rename(temp, file);
+        rename(tempFile, originalFile);
         char action[SIZE];
         snprintf(action, sizeof(action), "Removed treasure %s.", target_id);
         logAction(hunt_id, action);
-        printf("Treasure %s removed successfully.\n", target_id);
+        printf("Treasure %s sters cu succes.\n", target_id);
     } else {
-        unlink(temp);
-        printf("Treasure %s not found.\n", target_id);
+        unlink(tempFile);
+        printf("Treasure %s nu a fost gasit.\n", target_id);
     }
 }
 
@@ -176,17 +170,17 @@ void listTreasures(char* hunt_id) {
 
     struct stat st;
     if (stat(file, &st) < 0) {
-        fprintf(stderr, "ERROR: %s\n", strerror(errno));
+        perror("Eroare la stat");
         return;
     }
 
     printf("Hunt: %s\n", hunt_id);
-    printf("Size: %ld bytes\n", st.st_size);
-    printf("Last modified: %s\n", ctime(&st.st_mtime));
+    printf("Dimensiune: %ld bytes\n", st.st_size);
+    printf("Ultima modificare: %s\n", ctime(&st.st_mtime));
 
     int f = open(file, O_RDONLY);
     if (f < 0) {
-        fprintf(stderr, "ERROR: %s\n", strerror(errno));
+        perror("Eroare la deschidere");
         return;
     }
 
@@ -198,7 +192,7 @@ void listTreasures(char* hunt_id) {
     close(f);
 
     char action[SIZE];
-    snprintf(action, sizeof(action), "Listed treasures from hunt %s.", hunt_id);
+    snprintf(action, sizeof(action), "Treasure-urile listate din hunt %s.", hunt_id);
     logAction(hunt_id, action);
 }
 
@@ -216,13 +210,13 @@ void removeHunt(char* hunt_id) {
     snprintf(symlink_name, sizeof(symlink_name), "logged_hunt-%s", hunt_id);
     unlink(symlink_name);
 
-    printf("Hunt %s removed.\n", hunt_id);
+    printf("Hunt %s a fost sters.\n", hunt_id);
 }
 
 
 
 void printUsage(char* arg) {
-    printf("Usage:\n");
+    printf("Utilisare:\n");
     printf("%s --add <hunt_id>\n", arg);
     printf("%s --list <hunt_id>\n", arg);
     printf("%s --view <hunt_id> <treasure_id>\n", arg);
