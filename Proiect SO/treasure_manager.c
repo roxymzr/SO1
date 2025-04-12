@@ -20,7 +20,7 @@ typedef struct {
     int value;
 } Treasure;
 
-void logAction(char* hunt_id, char* action) {
+void logAction(const char* hunt_id,const char* action) {
     char file[SIZE];
     snprintf(file, sizeof(file), "%s/%s", hunt_id, HUNT_FILE);
 
@@ -39,7 +39,7 @@ void logAction(char* hunt_id, char* action) {
     symlink(file, symlink_name);
 }
 
-void addTreasure(char* hunt_id) {
+void addTreasure(const char* hunt_id) {
     mkdir(hunt_id, 0755);
 
     char file[SIZE];
@@ -53,39 +53,41 @@ void addTreasure(char* hunt_id) {
 
     Treasure treasure;
 
-    printf("Treasure ID: ");
-    fgets(treasure.id, SIZE, stdin);
-    treasure.id[strcspn(treasure.id, "\n")] = '\0';
+    printf("Enter the treasure details:\n");
 
-    printf("Username: ");
-    fgets(treasure.username, SIZE, stdin);
-    treasure.username[strcspn(treasure.username, "\n")] = '\0';
-
-    printf("Latitude: ");
-    scanf("%f", &treasure.latitude);
+    printf("ID: "); 
+    scanf(" %255[^\n]", treasure.id); 
     getchar();
 
-    printf("Longitude: ");
-    scanf("%f", &treasure.longitude);
+    printf("Username: "); 
+    scanf(" %255[^\n]", treasure.username); 
     getchar();
 
-    printf("Clue: ");
-    fgets(treasure.clue, SIZE, stdin);
-    treasure.clue[strcspn(treasure.clue, "\n")] = '\0';
+    printf("Latitude: "); 
+    scanf("%f", &treasure.latitude); 
+    getchar();    
 
-    printf("Value: ");
-    scanf("%d", &treasure.value);
+    printf("Longitude: "); 
+    scanf("%f", &treasure.longitude); 
+    getchar();
+
+    printf("Clue: "); 
+    scanf(" %255[^\n]", treasure.clue); 
+    getchar();
+
+    printf("Value: "); 
+    scanf("%d", &treasure.value); 
     getchar();
 
     write(f, &treasure, sizeof(Treasure));
     close(f);
 
-    logAction(hunt_id, "Treasure adaugat");
+    logAction(hunt_id, "Treasure added");
 
-    printf("Treasure adaugat cu succes.\n");
+    printf("Treasure added successfully.\n");
 }
 
-void viewTreasure(char* hunt_id, char* target_id) {
+void viewTreasure(const char* hunt_id,const char* target_id) {
     char file[SIZE];
     snprintf(file, sizeof(file), "%s/%s", hunt_id, TREASURE_FILE);
 
@@ -96,23 +98,24 @@ void viewTreasure(char* hunt_id, char* target_id) {
     }
 
     Treasure treasure;
-    int found = 0;
+    int ok = 0;
 
-    while (read(f, &treasure, sizeof(Treasure)) == sizeof(Treasure)) {
+    for (;;) {
+        ssize_t bytes = read(f, &treasure, sizeof(Treasure));
+        if (bytes != sizeof(Treasure)) break;
 
         if (strcmp(treasure.id, target_id) == 0) {
-            printf("\n Treasure gasit:\n");
-            printf("ID: %s, Username: %s, Latitude: %.2f, Longitude: %.2f, Value: %d\n",
-                treasure.id, treasure.username, treasure.latitude, treasure.longitude, treasure.value);
-            found = 1;
+            ok = 1;
             break;
         }
     }
 
-    close(f);
-
-    if (!found) {
-        printf("Treasure cu ID-ul: %s nu a fost gasit.\n", target_id);
+    if (ok) {
+        printf(">>> Treasure found:\n");
+        printf("ID: %s\nUsername: %s\nLatitude: %.2f\nLongitude: %.2f\nClue: %s\nValue: %d\n",
+            treasure.id, treasure.username, treasure.latitude, treasure.longitude, treasure.clue ,treasure.value);
+    } else {
+        printf("Treasure with ID %s not found.\n", target_id);
     }
 
     char action[SIZE];
@@ -120,7 +123,7 @@ void viewTreasure(char* hunt_id, char* target_id) {
     logAction(hunt_id, action);
 }
 
-void removeTreasure(char* hunt_id, char* target_id) {
+void removeTreasure(const char* hunt_id,const char* target_id) {
     char originalFile[SIZE];
     snprintf(originalFile, sizeof(originalFile), "%s/%s", hunt_id, TREASURE_FILE);
 
@@ -157,14 +160,14 @@ void removeTreasure(char* hunt_id, char* target_id) {
         char action[SIZE];
         snprintf(action, sizeof(action), "Removed treasure %s.", target_id);
         logAction(hunt_id, action);
-        printf("Treasure %s sters cu succes.\n", target_id);
+        printf("Treasure %s deleted successfully.\n", target_id);
     } else {
         unlink(tempFile);
-        printf("Treasure %s nu a fost gasit.\n", target_id);
+        printf("Treasure %s not found.\n", target_id);
     }
 }
 
-void listTreasures(char* hunt_id) {
+void listTreasures(const char* hunt_id) {
     char file[SIZE];
     snprintf(file, sizeof(file), "%s/%s", hunt_id, TREASURE_FILE);
 
@@ -175,8 +178,8 @@ void listTreasures(char* hunt_id) {
     }
 
     printf("Hunt: %s\n", hunt_id);
-    printf("Dimensiune: %ld bytes\n", st.st_size);
-    printf("Ultima modificare: %s\n", ctime(&st.st_mtime));
+    printf("Size: %ld bytes\n", st.st_size);
+    printf("Last update: %s\n", ctime(&st.st_mtime));
 
     int f = open(file, O_RDONLY);
     if (f < 0) {
@@ -184,19 +187,23 @@ void listTreasures(char* hunt_id) {
         return;
     }
 
-    Treasure treasure;
-    while (read(f, &treasure, sizeof(Treasure)) == sizeof(Treasure)) {
-        printf("ID: %s, User: %s, Lat: %.2f, Long: %.2f, Value: %d\n",
-            treasure.id, treasure.username, treasure.latitude, treasure.longitude, treasure.value);
+    for(;;)
+    {
+        Treasure treasure;
+        ssize_t bytesRead=read(f,&treasure,sizeof(Treasure));
+        if(bytesRead!=sizeof(Treasure)) break;
+
+        printf(">> ID: %s | Username: %s | Lat: %.2f | Long: %.2f | Clue: %s | Value: %d\n",treasure.id,treasure.username,treasure.latitude,treasure.longitude,treasure.clue,treasure.value);
     }
+
     close(f);
 
     char action[SIZE];
-    snprintf(action, sizeof(action), "Treasure-urile listate din hunt %s.", hunt_id);
+    snprintf(action, sizeof(action), "Treasures from %s.", hunt_id);
     logAction(hunt_id, action);
 }
 
-void removeHunt(char* hunt_id) {
+void removeHunt(const char* hunt_id) {
     char file[SIZE];
     snprintf(file, sizeof(file), "%s/%s", hunt_id, TREASURE_FILE);
     unlink(file);
@@ -210,12 +217,12 @@ void removeHunt(char* hunt_id) {
     snprintf(symlink_name, sizeof(symlink_name), "logged_hunt-%s", hunt_id);
     unlink(symlink_name);
 
-    printf("Hunt %s a fost sters.\n", hunt_id);
+    printf("Hunt %s deleted.\n", hunt_id);
 }
 
 
 
-void printUsage(char* arg) {
+void Help(const char* arg) {
     printf("Utilisare:\n");
     printf("%s --add <hunt_id>\n", arg);
     printf("%s --list <hunt_id>\n", arg);
@@ -226,7 +233,7 @@ void printUsage(char* arg) {
 
 int main(int argc, char **argv) {
     if (argc < 3) {
-        printUsage(argv[0]);
+        Help(argv[0]);
         return 1;
     }
 
@@ -241,7 +248,7 @@ int main(int argc, char **argv) {
     } else if (strcmp(argv[1], "--remove_hunt") == 0) {
         removeHunt(argv[2]);
     } else {
-        printUsage(argv[0]);
+        Help(argv[0]);
     }
 
     return 0;
