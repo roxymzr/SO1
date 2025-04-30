@@ -8,22 +8,25 @@
 #include <string.h>
 #include <sys/wait.h>
 #include <errno.h>
+#include <fcntl.h>
 
 #define CMD_FILE  "hub_cmd.txt"
 
 static pid_t monitor_pid = -1;
 static int   monitor_running = 0;
 
-// SIGCHLD handler: catch the monitor’s exit
+// SIGCHLD handler: catch any child’s exit
 void sigchld_handler(int sig) {
     int status;
-    pid_t pid = waitpid(monitor_pid, &status, WNOHANG);
-    if (pid == monitor_pid) {
-        monitor_running = 0;
-        if (WIFEXITED(status)) {
-            printf("Monitor exited with status %d\n", WEXITSTATUS(status));
-        } else if (WIFSIGNALED(status)) {
-            printf("Monitor killed by signal %d\n", WTERMSIG(status));
+    pid_t pid;
+    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
+        if (pid == monitor_pid) {
+            monitor_running = 0;
+            if (WIFEXITED(status)) {
+                printf("\nMonitor exited with status %d\n", WEXITSTATUS(status));
+            } else if (WIFSIGNALED(status)) {
+                printf("\nMonitor killed by signal %d\n", WTERMSIG(status));
+            }
         }
     }
 }
@@ -40,12 +43,18 @@ void start_monitor() {
         return;
     }
     if (pid == 0) {
-        // Child → exec the monitor
+        // Child: redirect stdout/stderr and exec the monitor
+        fclose(stdout);
+        fclose(stderr);
+        open("/dev/null", O_WRONLY); // fd 1 = stdout
+        dup2(1, 2); // stderr -> stdout
+
         execl("./treasure_monitor", "treasure_monitor", NULL);
         perror("execl");
         exit(1);
     }
-    // Parent
+
+    // Parent continues
     monitor_pid = pid;
     monitor_running = 1;
 
@@ -59,7 +68,6 @@ void start_monitor() {
     printf("Started monitor (PID %d)\n", monitor_pid);
 }
 
-// Write a single-line command to CMD_FILE and signal monitor
 void send_cmd(const char *cmd) {
     if (!monitor_running) {
         printf("Error: monitor not running.\n");
@@ -67,10 +75,13 @@ void send_cmd(const char *cmd) {
     }
     FILE *f = fopen(CMD_FILE, "w");
     if (!f) { perror("fopen"); return; }
+
     fprintf(f, "%s\n", cmd);
+    fflush(f);
+    int fd = fileno(f);
+    fsync(fd);
     fclose(f);
 
-    // Tell monitor to read it
     kill(monitor_pid, SIGUSR1);
 }
 
@@ -81,15 +92,14 @@ void stop_monitor() {
     }
     kill(monitor_pid, SIGUSR2);
     printf("Sent stop request to monitor.\n");
-    // Further commands will be blocked until it exits (SIGCHLD)
 }
 
 int main() {
     char line[128];
 
     while (1) {
-        printf("hub> ");
-        fflush(stdout);               // <— force the prompt to appear immediately
+        printf("\nhub> ");
+        fflush(stdout);
         if (!fgets(line, sizeof(line), stdin)) break;
         line[strcspn(line, "\n")] = '\0';
 
@@ -98,6 +108,12 @@ int main() {
         else if (strncmp(line, "list_treasures ", 15) == 0) send_cmd(line);
         else if (strncmp(line, "view_treasure ", 14) == 0) send_cmd(line);
         else if (strcmp(line, "stop_monitor")   == 0) stop_monitor();
+        else if (strcmp(line, "status")         == 0) {
+            if (monitor_running)
+                printf("Monitor is running (PID %d)\n", monitor_pid);
+            else
+                printf("Monitor is not running.\n");
+        }
         else if (strcmp(line, "exit")           == 0) {
             if (monitor_running)
                 printf("Error: stop monitor before exit.\n");
