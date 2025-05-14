@@ -1,6 +1,4 @@
-// treasure_monitor.c
-// Background monitor process for Phase 2
-
+// === treasure_monitor.c ===
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -9,95 +7,97 @@
 #include <errno.h>
 #include <sys/wait.h>
 #include <dirent.h>
+#include <fcntl.h>
 
 #define CMD_FILE      "hub_cmd.txt"
 #define TREASURE_EXE  "./treasure_manager"
+#define PATH_SIZE     512
+#define BUFFER_SIZE   512
+#define ID_SIZE       256
+
+typedef struct {
+    char id[ID_SIZE];
+    char username[ID_SIZE];
+    float latitude;
+    float longitude;
+    char clue[ID_SIZE];
+    int value;
+} Treasure;
 
 static volatile sig_atomic_t got_cmd_signal   = 0;
 static volatile sig_atomic_t got_stop_signal  = 0;
 
-void handle_cmd(int sig) {
-    got_cmd_signal = 1;
-}
+void handle_cmd(int sig) { got_cmd_signal = 1; }
+void handle_stop(int sig) { got_stop_signal = 1; }
 
-void handle_stop(int sig) {
-    got_stop_signal = 1;
+void write_output(const char *msg) {
+    write(STDOUT_FILENO, msg, strlen(msg));
 }
 
 void exec_command(char *const argv[]) {
+    int pipefd[2];
+    if (pipe(pipefd) < 0) {
+        perror("pipe");
+        return;
+    }
     pid_t pid = fork();
     if (pid < 0) {
-        perror("monitor: fork");
+        perror("fork");
         return;
     } else if (pid == 0) {
+        // child: run treasure_manager command
+        dup2(pipefd[1], STDOUT_FILENO);
+        close(pipefd[0]);
         execvp(argv[0], argv);
-        perror("monitor: execvp");
+        perror("execvp");
         exit(1);
     } else {
-        int status;
-        waitpid(pid, &status, 0);
+        // parent: read child's output and forward
+        close(pipefd[1]);
+        char buffer[BUFFER_SIZE];
+        ssize_t n;
+        while ((n = read(pipefd[0], buffer, BUFFER_SIZE)) > 0) {
+            write(STDOUT_FILENO, buffer, n);
+        }
+        close(pipefd[0]);
+        waitpid(pid, NULL, 0);
     }
 }
 
-void list_hunts() {
-    printf("== Hunts & counts ==\n");
-
+void list_hunts_pipe() {
     DIR *dir = opendir(".");
-    if (!dir) {
-        perror("monitor: opendir");
-        return;
-    }
+    if (!dir) return;
 
     struct dirent *entry;
+    char path[PATH_SIZE];
+    char buffer[BUFFER_SIZE];
+
     while ((entry = readdir(dir))) {
         if (entry->d_type == DT_DIR && entry->d_name[0] != '.') {
-            char *hunt_name = entry->d_name;
-            pid_t pid = fork();
-            if (pid < 0) {
-                perror("monitor: fork");
-                continue;
-            } else if (pid == 0) {
-                // child: exec treasure_manager --list <hunt> | grep -c '^>>'
-                int pipefd[2];
-                pipe(pipefd);
-                pid_t gpid = fork();
-                if (gpid == 0) {
-                    // grandchild: exec treasure_manager
-                    dup2(pipefd[1], STDOUT_FILENO);
-                    close(pipefd[0]);
-                    execl(TREASURE_EXE, TREASURE_EXE, "--list", hunt_name, NULL);
-                    perror("monitor: exec treasure_manager");
-                    exit(1);
-                } else {
-                    // child: read output and count lines with ">>"
-                    close(pipefd[1]);
-                    FILE *fp = fdopen(pipefd[0], "r");
-                    char line[256];
-                    int count = 0;
-                    while (fgets(line, sizeof(line), fp)) {
-                        if (strncmp(line, ">>", 2) == 0) count++;
-                    }
-                    fclose(fp);
-                    wait(NULL); // wait for grandchild
-                    printf("%s: %d treasures\n", hunt_name, count);
-                    exit(0);
-                }
-            } else {
-                waitpid(pid, NULL, 0);
-            }
+            snprintf(path, sizeof(path), "%s/treasure.dat", entry->d_name);
+            int fd = open(path, O_RDONLY);
+            if (fd < 0) continue;
+
+            int count = 0;
+            Treasure t;
+            while (read(fd, &t, sizeof(Treasure)) == sizeof(Treasure))
+                count++;
+            close(fd);
+
+            snprintf(buffer, sizeof(buffer), "%s: %d treasures\n", entry->d_name, count);
+            write_output(buffer);
         }
     }
+
     closedir(dir);
 }
 
 void process_command() {
     FILE *f = fopen(CMD_FILE, "r");
-    if (!f) {
-        perror("monitor: fopen");
-        return;
-    }
-    char buf[256];
-    if (!fgets(buf, sizeof(buf), f)) {
+    if (!f) return;
+
+    char buf[BUFFER_SIZE];
+    if (!fgets(buf, BUFFER_SIZE, f)) {
         fclose(f);
         return;
     }
@@ -108,62 +108,49 @@ void process_command() {
     if (!cmd) return;
 
     if (strcmp(cmd, "list_hunts") == 0) {
-        list_hunts();
-    }
-    else if (strcmp(cmd, "list_treasures") == 0) {
+        list_hunts_pipe();
+    } else if (strcmp(cmd, "list_treasures") == 0) {
         char *hunt = strtok(NULL, " ");
         if (hunt) {
-            printf("== Treasures in %s ==\n", hunt);
             char *args[] = {TREASURE_EXE, "--list", hunt, NULL};
             exec_command(args);
-        } else {
-            printf("Monitor: missing hunt name for list_treasures.\n");
         }
-    }
-    else if (strcmp(cmd, "view_treasure") == 0) {
+    } else if (strcmp(cmd, "view_treasure") == 0) {
         char *hunt = strtok(NULL, " ");
-        char *tid  = strtok(NULL, " ");
+        char *tid = strtok(NULL, " ");
         if (hunt && tid) {
-            printf("== View %s / %s ==\n", hunt, tid);
             char *args[] = {TREASURE_EXE, "--view", hunt, tid, NULL};
             exec_command(args);
-        } else {
-            printf("Monitor: missing arguments for view_treasure.\n");
         }
-    }
-    else {
-        printf("Monitor: unknown command '%s'\n", cmd);
+    } else {
+        write_output("Monitor: Unknown command\n");
     }
 }
 
 int main() {
-    struct sigaction sa1 = { .sa_handler = handle_cmd };
-    sigemptyset(&sa1.sa_mask);
-    sa1.sa_flags = 0;
+    // Setup signal handlers
+    struct sigaction sa1;
+    memset(&sa1, 0, sizeof(sa1));
+    sa1.sa_handler = handle_cmd;
     sigaction(SIGUSR1, &sa1, NULL);
 
-    struct sigaction sa2 = { .sa_handler = handle_stop };
-    sigemptyset(&sa2.sa_mask);
-    sa2.sa_flags = 0;
+    struct sigaction sa2;
+    memset(&sa2, 0, sizeof(sa2));
+    sa2.sa_handler = handle_stop;
     sigaction(SIGUSR2, &sa2, NULL);
 
-    printf("Monitor ready (pid=%d)\n", getpid());
-    fflush(stdout);
-
+    // Main loop
     while (1) {
-        pause();  // wait for signal
-
+        pause();
         if (got_cmd_signal) {
             process_command();
             got_cmd_signal = 0;
         }
         if (got_stop_signal) {
-            usleep(500000);  // simulate cleanup
-            printf("Monitor terminating...\n");
-            fflush(stdout);
+            usleep(500000); // simulate cleanup
+            write_output("Monitor terminating...\n");
             exit(0);
         }
     }
     return 0;
 }
-
