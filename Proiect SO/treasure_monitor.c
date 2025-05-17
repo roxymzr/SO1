@@ -1,4 +1,3 @@
-// === treasure_monitor.c ===
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -139,7 +138,7 @@ int main() {
     sa2.sa_handler = handle_stop;
     sigaction(SIGUSR2, &sa2, NULL);
 
-    // Main loop
+   
     while (1) {
         pause();
         if (got_cmd_signal) {
@@ -147,7 +146,7 @@ int main() {
             got_cmd_signal = 0;
         }
         if (got_stop_signal) {
-            usleep(500000); // simulate cleanup
+            usleep(500000); 
             write_output("Monitor terminating...\n");
             exit(0);
         }
